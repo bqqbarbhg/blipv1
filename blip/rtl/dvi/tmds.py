@@ -40,6 +40,8 @@ class TMDSEncoder(Elaboratable):
             else:
                 m.d.comb += xnored[n].eq(xored[n])
 
+        # TODO: Merge inverting with XNOR application!
+
         m.d.comb += [
             self.o_char.eq(Cat(xnored, ~use_xnor, 0))
         ]
