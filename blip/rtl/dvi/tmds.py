@@ -1,6 +1,9 @@
 from nmigen import *
 from nmigen.asserts import Assert, Assume, Cover, AnyConst
 from nmigen.cli import main_parser, main_runner
+from nmigen.back import rtlil
+from blip import check, Builder
+from blip.task import sby
 
 def popcount(value):
     result = Const(0, range(len(value)))
@@ -39,8 +42,6 @@ class TMDSEncoder(Elaboratable):
                 m.d.comb += xnored[n].eq(xored[n] ^ use_xnor)
             else:
                 m.d.comb += xnored[n].eq(xored[n])
-
-        # TODO: Merge inverting with XNOR application!
 
         m.d.comb += [
             self.o_char.eq(Cat(xnored, ~use_xnor, 0))
@@ -114,9 +115,9 @@ class TMDSDecoder(Elaboratable):
 
         return m
 
-if __name__ == "__main__":
-    parser = main_parser()
-    args = parser.parse_args()
+def build_formal(bld: Builder):
+    if bld.temp_exists("formal.il"):
+        return
 
     m = Module()
 
@@ -157,4 +158,20 @@ if __name__ == "__main__":
             Assert(dec.o_vsync == enc.i_vsync),
         ]
 
-    main_runner(parser, args, m)
+    with bld.temp_open("formal.il") as f:
+        il_text = rtlil.convert(m)
+        f.write(il_text)
+
+@check(shared=True)
+def bmc(bld: Builder):
+    build_formal(bld)
+    sby.verify(bld, "bmc.sby", "formal.il",
+        sby.Task("sby_bmc", "bmc", depth=40, engines=["smtbmc", "boolector"]),
+    )
+
+@check(shared=True)
+def cover(bld: Builder):
+    build_formal(bld)
+    sby.verify(bld, "cover.sby", "formal.il",
+        sby.Task("sby_cover", "cover", depth=40, engines=["smtbmc", "boolector"]),
+    )

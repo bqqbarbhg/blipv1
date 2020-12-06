@@ -1,2 +1,6 @@
 
+.vscode/
 build/
+temp/
+__pycache__/
+*.pyc
