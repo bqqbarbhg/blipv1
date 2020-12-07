@@ -172,6 +172,9 @@ def build_formal(bld: Builder):
 
     enc_char = Signal(10)
 
+    real_chr_bias = Signal(signed(5))
+    real_dc_bias = Signal(signed(5))
+
     m.submodules.enc = enc = TMDSEncoder()
     m.submodules.dec = dec = TMDSDecoder()
 
@@ -183,6 +186,19 @@ def build_formal(bld: Builder):
         dec.i_char.eq(enc.o_char),
         enc_char.eq(enc.o_char),
     ]
+
+    # Check DC bias
+    m.d.comb += [
+        real_chr_bias.eq(popcount(enc.o_char) - 5),
+        Assert(real_dc_bias >= -5),
+        Assert(real_dc_bias <= +5),
+    ]
+    m.d.sync += [
+        real_dc_bias.eq(real_dc_bias + real_chr_bias),
+    ]
+
+    with m.If(~enc.i_en_data):
+        m.d.sync += real_dc_bias.eq(0)
 
     m.d.comb += Cover(enc.o_char[8] == 0)
 
@@ -206,19 +222,19 @@ def build_formal(bld: Builder):
         ]
 
     with bld.temp_open("formal.il") as f:
-        il_text = rtlil.convert(m, ports=[enc_char, enc._xored, enc._xnored])
+        il_text = rtlil.convert(m, ports=[enc_char, enc._xored, enc._xnored, real_chr_bias, real_dc_bias])
         f.write(il_text)
 
 @check(shared=True)
 def bmc(bld: Builder):
     build_formal(bld)
     sby.verify(bld, "bmc.sby", "formal.il",
-        sby.Task("sby_bmc", "bmc", depth=40, engines=["smtbmc", "boolector"]),
+        sby.Task("sby_bmc", "bmc", depth=40, engines=["smtbmc", "yices"]),
     )
 
 @check(shared=True)
 def cover(bld: Builder):
     build_formal(bld)
     sby.verify(bld, "cover.sby", "formal.il",
-        sby.Task("sby_cover", "cover", depth=40, engines=["smtbmc", "boolector"]),
+        sby.Task("sby_cover", "cover", depth=40, engines=["smtbmc", "yices"]),
     )
