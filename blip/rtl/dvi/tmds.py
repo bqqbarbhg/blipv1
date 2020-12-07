@@ -18,43 +18,82 @@ class TMDSEncoder(Elaboratable):
         self.i_hsync = Signal()
         self.i_vsync = Signal()
         self.o_char = Signal(10)
+        self.dc_bias = Signal(4)
+
+        self._xored = Signal(8)
+        self._xnored = Signal(8)
 
     def elaborate(self, platform):
         m = Module()
 
-        use_xnor = Signal()
-        xored = Signal(8)
-        xnored = Signal(8)
-        ctl_char = Signal(10)
+        # Select between XOR and XNOR encoding based on input popcount
+        # to minimize transitions
         i_pop = Signal(4)
-
+        use_xnor = Signal()
         m.d.comb += [
-            i_pop.eq(popcount(self.i_data[1:])),
+            i_pop.eq(popcount(self.i_data[1:8])),
             use_xnor.eq(i_pop > 3),
         ]
 
+        # Calculate XOR encoding serially with no dependency to `use_xnor`
+        xored = self._xored
         m.d.comb += xored[0].eq(self.i_data[0])
         for n in range(1, 8):
             m.d.comb += xored[n].eq(self.i_data[n] ^ xored[n - 1])
 
+        # Transform XOR to XNOR encoding if `use_xnor` is true
+        xnored = self._xnored
         for n in range(0, 8):
             if n % 2 == 1:
                 m.d.comb += xnored[n].eq(xored[n] ^ use_xnor)
             else:
                 m.d.comb += xnored[n].eq(xored[n])
 
-        m.d.comb += [
-            self.o_char.eq(Cat(xnored, ~use_xnor, 0))
-        ]
+        # Count the DC bias of the data word (-4 to +4)
+        x_bias = Signal(4)
+        m.d.comb += x_bias.eq(0b1100 + popcount(xnored)),
 
+        # Check if either the data word or current bias is zero,
+        # in which case it doesn't matter whether we invert the signal or not
+        zero_bias = Signal()
+        m.d.comb += zero_bias.eq((x_bias == 0) | (self.dc_bias == 0)),
+
+        # Check if the current and additional bias have the same sign
+        same_bias = Signal()
+        m.d.comb += same_bias.eq(x_bias[3] == self.dc_bias[3]),
+
+        # If we have zero current bias make sure `use_invert` is the same
+        # as `use_xnor` which will encode to either `0b01` or `0b10`. Otherwise
+        # make sure we reduce the current bias instead of increasing it.
+        use_invert = Signal()
+        m.d.comb += use_invert.eq(Mux(zero_bias, use_xnor, same_bias))
+
+        # Count the final DC bias in the output character including
+        # potential data inversion and the control bits
+        data_bias = Signal(4)
+        m.d.comb += data_bias.eq(Mux(use_invert, -x_bias, x_bias) + ~use_xnor + use_invert - 1)
+
+        # Select a fixed control character to use if necessary
+        ctl_char = Signal(10)
         with m.Switch(Cat(self.i_hsync, self.i_vsync)):
             with m.Case(0b00): m.d.comb += ctl_char.eq(0b1101010100)
             with m.Case(0b01): m.d.comb += ctl_char.eq(0b0010101011)
             with m.Case(0b10): m.d.comb += ctl_char.eq(0b0101010100)
             with m.Case(0b11): m.d.comb += ctl_char.eq(0b1010101011)
 
-        with m.If(~self.i_en_data):
-            m.d.comb += self.o_char.eq(ctl_char)
+        # Output either a control character or inverted word
+        with m.If(self.i_en_data):
+            m.d.comb += [
+                self.o_char.eq(Cat(Mux(use_invert, ~xnored, xnored), ~use_xnor, use_invert)),
+            ]
+        with m.Else():
+            m.d.comb += [
+                self.o_char.eq(ctl_char),
+            ]
+
+        # Update DC bias every clock if data is enabled
+        with m.If(self.i_en_data):
+            m.d.sync += self.dc_bias.eq(self.dc_bias + data_bias)
 
         return m
 
@@ -69,18 +108,23 @@ class TMDSDecoder(Elaboratable):
     def elaborate(self, platform):
         m = Module()
         
+        inverted = Signal(8)
         xored = Signal(8)
         use_xnor = Signal()
+        use_invert = Signal()
 
         m.d.comb += use_xnor.eq(~self.i_char[8])
+        m.d.comb += use_invert.eq(self.i_char[9])
 
-        m.d.comb += xored[0].eq(self.i_char[0])
+        m.d.comb += inverted.eq(Mux(use_invert, ~self.i_char[:8], self.i_char[:8]))
+
+        m.d.comb += xored[0].eq(inverted[0])
         for n in range(1, 8):
-            m.d.comb += xored[n].eq(self.i_char[n] ^ self.i_char[n - 1] ^ use_xnor)
+            m.d.comb += xored[n].eq(inverted[n] ^ inverted[n - 1] ^ use_xnor)
 
         m.d.comb += [
-            self.o_data.eq(xored),
             self.o_en_data.eq(1),
+            self.o_data.eq(xored),
         ]
 
         with m.Switch(self.i_char):
@@ -126,6 +170,8 @@ def build_formal(bld: Builder):
     hsync = AnyConst(1)
     vsync = AnyConst(1)
 
+    enc_char = Signal(10)
+
     m.submodules.enc = enc = TMDSEncoder()
     m.submodules.dec = dec = TMDSDecoder()
 
@@ -135,6 +181,7 @@ def build_formal(bld: Builder):
         enc.i_hsync.eq(hsync),
         enc.i_vsync.eq(vsync),
         dec.i_char.eq(enc.o_char),
+        enc_char.eq(enc.o_char),
     ]
 
     m.d.comb += Cover(enc.o_char[8] == 0)
@@ -159,7 +206,7 @@ def build_formal(bld: Builder):
         ]
 
     with bld.temp_open("formal.il") as f:
-        il_text = rtlil.convert(m)
+        il_text = rtlil.convert(m, ports=[enc_char, enc._xored, enc._xnored])
         f.write(il_text)
 
 @check(shared=True)
