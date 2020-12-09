@@ -1,5 +1,5 @@
 from nmigen import *
-from nmigen.asserts import Assert, Assume, Cover, AnyConst
+from nmigen.asserts import Assert, Assume, Cover, AnyConst, AnySeq
 from nmigen.cli import main_parser, main_runner
 from nmigen.back import rtlil
 from blip import check, Builder
@@ -165,10 +165,10 @@ def build_formal(bld: Builder):
 
     m = Module()
 
-    in_data = AnyConst(8)
-    en_data = AnyConst(1)
-    hsync = AnyConst(1)
-    vsync = AnyConst(1)
+    in_data = AnySeq(8)
+    en_data = AnySeq(1)
+    hsync = AnySeq(1)
+    vsync = AnySeq(1)
 
     enc_char = Signal(10)
 
@@ -192,13 +192,14 @@ def build_formal(bld: Builder):
         real_chr_bias.eq(popcount(enc.o_char) - 5),
         Assert(real_dc_bias >= -5),
         Assert(real_dc_bias <= +5),
+        Assert(real_dc_bias[:4] == enc.dc_bias),
     ]
     m.d.sync += [
         real_dc_bias.eq(real_dc_bias + real_chr_bias),
     ]
 
     with m.If(~enc.i_en_data):
-        m.d.sync += real_dc_bias.eq(0)
+        m.d.sync += real_dc_bias.eq(real_dc_bias)
 
     m.d.comb += Cover(enc.o_char[8] == 0)
 
@@ -226,15 +227,15 @@ def build_formal(bld: Builder):
         f.write(il_text)
 
 @check(shared=True)
-def bmc(bld: Builder):
+def prove(bld: Builder):
     build_formal(bld)
-    sby.verify(bld, "bmc.sby", "formal.il",
-        sby.Task("sby_bmc", "bmc", depth=40, engines=["smtbmc", "yices"]),
+    sby.verify(bld, "prove.sby", "formal.il",
+        sby.Task("sby_prove", "prove", depth=5, engines=["smtbmc", "yices"]),
     )
 
 @check(shared=True)
 def cover(bld: Builder):
     build_formal(bld)
     sby.verify(bld, "cover.sby", "formal.il",
-        sby.Task("sby_cover", "cover", depth=40, engines=["smtbmc", "yices"]),
+        sby.Task("sby_cover", "cover", depth=5, engines=["smtbmc", "yices"]),
     )
