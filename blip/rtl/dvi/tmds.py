@@ -230,12 +230,12 @@ def build_formal(bld: Builder):
 def prove(bld: Builder):
     build_formal(bld)
     sby.verify(bld, "prove.sby", "formal.il",
-        sby.Task("sby_prove", "prove", depth=5, engines=["smtbmc", "yices"]),
+        sby.Task("sby_prove", "prove", depth=3, engines=["smtbmc", "yices"]),
     )
 
 @check(shared=True)
 def cover(bld: Builder):
     build_formal(bld)
     sby.verify(bld, "cover.sby", "formal.il",
-        sby.Task("sby_cover", "cover", depth=5, engines=["smtbmc", "yices"]),
+        sby.Task("sby_cover", "cover", depth=3, engines=["smtbmc", "yices"]),
     )
