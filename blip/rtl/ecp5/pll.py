@@ -111,7 +111,7 @@ class Ecp5Pll(Elaboratable):
         return m
 
 @check()
-def simple(bld: Builder):
+def triple_blinky(bld: Builder):
     platform = ULX3S_85F_Platform()
 
     class Top(Elaboratable):
