@@ -17,7 +17,9 @@ argv = parser.parse_args(sys.argv[1:])
 if argv.cmd == "check":
 
     check_files = [
-        "rtl.dvi.tmds"
+        "rtl.dvi.tmds",
+        "rtl.pll",
+        "rtl.ecp5.pll",
     ]
 
     def use_check(check: Check) -> bool:
