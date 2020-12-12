@@ -41,11 +41,11 @@ class Ecp5Pll(Elaboratable):
         Internal structure:
 
             i_clk
-              V
+              v
          {/ ref_div}
-              V
+              v
              {PD} <------------+
-              V                |
+              v                |
             {VCO}-------> {/ fb_div}
               |
               +---------------+---------------+
