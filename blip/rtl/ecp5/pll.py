@@ -65,7 +65,7 @@ class Ecp5Pll(Elaboratable):
         `i_clk/ref_div` and the *feedback clock* `VCO/fb_div`, and adjusts the
         frequency of the {VCO} until they are in sync. This causes {VCO} to run
         at the frequency `i_clk * (fb_div/ref_div)`. The individual output clocks
-        are obtained by dividing VCO by their respective output divisors.
+        are obtained by dividing {VCO} by their respective output divisors.
 
         We first search all possible `(ref_div, fb_div)` pairs that produce
         legal internal frequencies (400-800MHz for {VCO}, 10-400Hz for {PD}).
