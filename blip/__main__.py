@@ -20,6 +20,7 @@ if argv.cmd == "check":
         "rtl.dvi.tmds",
         "rtl.pll",
         "rtl.ecp5.pll",
+        "util.dvi_timing",
     ]
 
     def use_check(check: Check) -> bool:
@@ -62,4 +63,5 @@ if argv.cmd == "check":
         time.sleep(0.1)
 
     os.makedirs(build_dir, exist_ok=True)
-    shutil.copytree(temp_dir, build_dir, dirs_exist_ok=True)
+    if os.path.exists(temp_dir):
+        shutil.copytree(temp_dir, build_dir, dirs_exist_ok=True)

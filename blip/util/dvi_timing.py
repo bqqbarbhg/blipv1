@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from blip import check, Builder
 
 @dataclass
 class DVITiming:
@@ -139,3 +140,19 @@ def get_dvi_mode_cvt_rb(width: int, height: int, framerate: int=60) -> DVIMode:
             invert_polarity=True,
         ),
     )
+
+@check()
+def fixtures_rb(bld: Builder):
+    fixtures = [
+        (1280,  720, 60, DVIMode( 64.0, 60, DVITiming(80, 1280, 48, 32, 0), DVITiming(13,  720, 3, 5, 1))),
+        (1920, 1080, 60, DVIMode(138.5, 60, DVITiming(80, 1920, 48, 32, 0), DVITiming(23, 1080, 3, 5, 1))),
+        ( 800,  480, 60, DVIMode( 28.5, 60, DVITiming(80,  800, 48, 32, 0), DVITiming( 6,  480, 3, 7, 1))),
+    ]
+
+    for w, h, fps, ref in fixtures:
+        mode = get_dvi_mode_cvt_rb(w, h, fps)
+        assert abs(mode.pixel_clock == ref.pixel_clock) <= 1e-3
+        assert abs(mode.framerate == ref.framerate) <= 1e-3
+        assert mode.h == ref.h
+        assert mode.v == ref.v
+
