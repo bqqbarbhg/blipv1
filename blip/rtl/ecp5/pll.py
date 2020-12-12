@@ -71,7 +71,7 @@ class Ecp5Pll(Elaboratable):
         legal internal frequencies (400-800MHz for {VCO}, 10-400Hz for {PD}).
         With a potential chosen {VCO} frequency we solve the optimal output
         clock divisors and check that they are within the requested tolerances.
-        Finally we select the configuration with the lowest error if any.
+        Finally we select the configuration with the lowest error, if any.
         """
 
         # Check that the inputs are reasonable
