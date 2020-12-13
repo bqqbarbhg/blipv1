@@ -1,4 +1,6 @@
+from nmigen.build.run import BuildPlan
 import os
+import sys
 import subprocess
 from typing import Iterable, Optional, Callable, List
 from dataclasses import dataclass
@@ -131,6 +133,17 @@ class Builder:
             stderr=os.path.join(self.prefix_path, name + ".err"),
             cwd=cwd,
             threads=threads))
+    
+    def exec_plan(self, name: str, plan: BuildPlan, cwd: Optional[str] = None):
+        if cwd is None:
+            cwd = self.prefix_path
+        
+        plan.execute_local(cwd, run_script=False)
+
+        if sys.platform.startswith("win32"):
+            self.exec(name, "cmd", ["/c", f"call {plan.script}.bat"], cwd)
+        else:
+            self.exec(name, "sh", [f"{plan.script}.sh"], cwd)
 
 all_checks = []
 

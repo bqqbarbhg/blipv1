@@ -29,7 +29,6 @@ clko_names = ["CLKOP", "CLKOS", "CLKOS2"]
 
 Config = namedtuple("Config", "error ref_div fb_div clko_divs")
 
-
 class Ecp5Pll(Elaboratable):
 
     def __init__(self, clki_freq: Union[int, float], clkos: Iterable[PllClock]):
@@ -228,4 +227,5 @@ def triple_blinky(bld: Builder):
 
             return m
 
-    platform.build(Top(), build_dir=bld.prefix_path)
+    plan = platform.build(Top(), do_build=False)
+    bld.exec_plan("synth", plan)

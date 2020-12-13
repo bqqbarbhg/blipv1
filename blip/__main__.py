@@ -25,7 +25,7 @@ if argv.cmd == "check":
 
     def use_check(check: Check) -> bool:
         if not argv.checks: return True
-        return any(check.name.startswith(c) for c in argv.checks)
+        return any((check.name + ".").startswith(c + ".") for c in argv.checks)
 
     for f in check_files:
         should_load = not argv.checks
@@ -48,20 +48,29 @@ if argv.cmd == "check":
     temp_dir = os.path.join("temp", timestamp)
     build_dir = "build"
 
-    scheduler = Scheduler(16)
+    scheduler = Scheduler(max_threads=os.cpu_count())
     builder = Builder(scheduler, build_dir=temp_dir)
 
+    begin_sec = time.time()
+
+    num_executed = False
     for check in all_checks:
         if not use_check(check): continue
         print(check.name + "...", flush=True)
         builder.set_prefix(check.prefix)
         check.func(builder)
         scheduler.update()
+        num_executed += 1
 
     while not scheduler.finished():
         scheduler.update()
         time.sleep(0.1)
-
+    
     os.makedirs(build_dir, exist_ok=True)
     if os.path.exists(temp_dir):
+        print(f"Copying '{temp_dir}' to '{build_dir}'")
         shutil.copytree(temp_dir, build_dir, dirs_exist_ok=True)
+
+    end_sec = time.time()
+    num_sec = end_sec - begin_sec
+    print(f"Finished {num_executed} checks in {num_sec:.1f} seconds ({scheduler.max_threads} threads).")
