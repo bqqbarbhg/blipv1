@@ -1,11 +1,11 @@
 from nmigen import *
 from nmigen.build import Platform
 from nmigen_boards.ulx3s import ULX3S_85F_Platform
+from blip import check, Builder
 from blip.rtl.pll import PllClock
 from typing import Union, Iterable
 from itertools import product
 from collections import namedtuple
-from blip import check, Builder
 
 MHz = 1e6
 
@@ -68,7 +68,7 @@ def find_config(ref_hz: float, clkos: Iterable[PllClock]):
                 break # Skip following `else` block
             clk_divs.append(best_div)
             clk_hzs.append(best_hz)
-            error += best_err2
+            error += best_err2 * clko.error_weight
         else:
             # Select this config if the error (or divisors if equal) is
             # lower than the previously found best one

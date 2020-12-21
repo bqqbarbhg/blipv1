@@ -7,10 +7,12 @@ class PllClock:
     
     frequency: Output frequency in Hz
     tolerance: Maximum relative error, either a single value or (-, +)
+    error_weight: Weight of the error relative to other output clocks
     """
 
     frequency: float
     tolerance: Union[float, Tuple[float, float]] = 0.001
+    error_weight: float = 1.0
 
     def tolerance_below(self):
         t = self.tolerance
