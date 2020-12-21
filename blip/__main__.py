@@ -20,6 +20,7 @@ if argv.cmd == "check":
         "rtl.dvi.tmds",
         "rtl.pll",
         "rtl.ecp5.pll",
+        "rtl.ecp5.io",
         "util.dvi_timing",
     ]
 

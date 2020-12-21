@@ -27,11 +27,60 @@ fb_divs  = range(1, 128 + 1)
 
 clko_names = ["CLKOP", "CLKOS", "CLKOS2"]
 
-Config = namedtuple("Config", "error ref_div fb_div clko_divs")
+Config = namedtuple("Config", "error ref_div fb_div clko_divs clko_hzs")
+
+def find_config(ref_hz: float, clkos: Iterable[PllClock]):
+    """Find PLL configuration for ECP5
+
+    See documentation on Ecp5Pll for more information.
+    """
+
+    # Iterate all possible reference and feedback divisor
+    # values to find the optimal configuration
+    best_config = None
+
+    for ref_div, fb_div in product(ref_divs, fb_divs):
+        fb_hz = ref_hz / ref_div
+        vco_hz = fb_hz * fb_div
+
+        # Check that the resulting frequencies are within
+        # the allowed limits
+        if fb_hz not in fb_hzs or vco_hz not in vco_hzs:
+            continue
+
+        # Find the nearest divisors for each output clock and
+        # measure total error and that individual errors are
+        # within the supplied tolerances
+        clk_divs = []
+        clk_hzs = []
+        error = 0.0
+        for clko in clkos:
+            best_div, best_hz, best_err2 = 0, 0, 0
+            for div_fudge in range(-2, 2 + 1):
+                out_div = min(max(round(vco_hz / clko.frequency) + div_fudge, 1), 128)
+                out_hz = vco_hz / out_div
+                out_err = (out_hz - clko.frequency) / clko.frequency
+                out_err2 = out_err * out_err
+                if clko.tolerance_below() <= out_err <= clko.tolerance_above():
+                    if best_div == 0 or out_err2 < best_err2:
+                        best_div, best_hz, best_err2 = out_div, out_hz, out_err2
+            if best_div == 0:
+                break # Skip following `else` block
+            clk_divs.append(best_div)
+            clk_hzs.append(best_hz)
+            error += best_err2
+        else:
+            # Select this config if the error (or divisors if equal) is
+            # lower than the previously found best one
+            config = Config(error, ref_div, fb_div, clk_divs, clk_hzs)
+            if not best_config or config < best_config:
+                best_config = config
+    
+    return best_config
 
 class Ecp5Pll(Elaboratable):
 
-    def __init__(self, clki_freq: Union[int, float], clkos: Iterable[PllClock]):
+    def __init__(self, clki_freq: float, clkos: Iterable[PllClock]):
         """Lattice ECP5 Phase-Locked Loop clock generator
 
         clki_freq: Input clock frequency
@@ -94,43 +143,10 @@ class Ecp5Pll(Elaboratable):
         self.o_vco = Signal()
         self.o_locked = Signal()
 
-        # Iterate all possible reference and feedback divisor
-        # values to find the optimal configuration
-        best_config = None
-        ref_hz = clki_freq
-
-        for ref_div, fb_div in product(ref_divs, fb_divs):
-            fb_hz = ref_hz / ref_div
-            vco_hz = fb_hz * fb_div
-
-            # Check that the resulting frequencies are within
-            # the allowed limits
-            if fb_hz not in fb_hzs or vco_hz not in vco_hzs:
-                continue
-
-            # Find the nearest divisors for each output clock and
-            # measure total error and that individual errors are
-            # within the supplied tolerances
-            clk_divs = []
-            error = 0.0
-            for clko in clkos:
-                out_div = min(max(round(vco_hz / clko.frequency), 1), 128)
-                out_hz = vco_hz / out_div
-                out_err = ((out_hz - clko.frequency) / clko.frequency) ** 2
-                error += out_err
-                if out_err >= clko.tolerance ** 2:
-                    break # Skip following `else` block
-                clk_divs.append(out_div)
-            else:
-                # Select this config if the error (or divisors if equal) is
-                # lower than the previously found best one
-                config = Config(error, ref_div, fb_div, clk_divs)
-                if not best_config or config < best_config:
-                    best_config = config
-
-        if not best_config:
+        config = find_config(clki_freq, clkos)
+        if not config:
             raise ValueError("Could not find a PLL configuration")
-        self.config = best_config
+        self.config = config
 
     def elaborate(self, platform: Platform) -> Module:
         m = Module()
@@ -161,13 +177,13 @@ class Ecp5Pll(Elaboratable):
         # Enable requested clocks
         # TODO: Phase?
         # TODO: Allow using CLKOS3 (complicates the configuration search though..)
-        for o_clk, clko, div, name in zip(self.o_clk, self.clkos, self.config.clko_divs, clko_names):
+        for o_clk, div, hz, name in zip(self.o_clk, self.config.clko_divs, self.config.clko_hzs, clko_names):
             params[f"p_{name}_ENABLE"] = "ENABLED"
             params[f"p_{name}_DIV"] = str(div)
             params[f"p_{name}_FPHASE"] = "0"
             params[f"p_{name}_CPHASE"] = "0"
             params[f"o_{name}"] = o_clk
-            platform.add_clock_constraint(o_clk, clko.frequency)
+            platform.add_clock_constraint(o_clk, hz)
 
         m.submodules.ehxpll = ehxpll = Instance("EHXPLLL", **params)
 
@@ -229,3 +245,14 @@ def triple_blinky(bld: Builder):
 
     plan = platform.build(Top(), do_build=False)
     bld.exec_plan("synth", plan)
+
+@check()
+def asymmetric_tolerances(bld: Builder):
+    config = find_config(25.0*MHz, [
+        PllClock(25.0*MHz),
+        PllClock(25.0*MHz, tolerance=(-0.1, -1e-6)),
+        PllClock(25.0*MHz, tolerance=(1e-6, 0.1)),
+    ])
+    assert config
+    assert config.clko_hzs[1] < 25*MHz
+    assert config.clko_hzs[2] > 25*MHz
