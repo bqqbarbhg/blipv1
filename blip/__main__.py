@@ -22,6 +22,7 @@ if argv.cmd == "check":
         "rtl.ecp5.pll",
         "rtl.ecp5.io",
         "util.dvi_timing",
+        "test.dvi_demo",
     ]
 
     def use_check(check: Check) -> bool:
