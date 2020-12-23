@@ -3,15 +3,15 @@ from nmigen.build import Platform
 from nmigen_boards.ulx3s import ULX3S_85F_Platform
 from blip import check, Builder
 from blip.rtl.dvi.tmds import TMDSEncoder
-from blip.rtl.ecp5.pll import Ecp5Pll, PllClock
-from blip.rtl.ecp5.io import Ecp5OutDdr2
+from blip.rtl.ecp5.pll import Ecp5Pll, PllClock, MHz
+from blip.rtl.ecp5.io import Ecp5OutDdr2, Ecp5EdgeClockSync, Ecp5ClockDiv2
 from blip.util.dvi_timing import get_dvi_mode_cvt_rb, DVIMode, DVITiming
 from nmigen.lib.fifo import AsyncFIFOBuffered
 
 @check(shared=True)
-def dvi_demo(bld: Builder):
+def synth(bld: Builder):
     platform = ULX3S_85F_Platform()
-    dvi_mode = get_dvi_mode_cvt_rb(800, 480)
+    dvi_mode = get_dvi_mode_cvt_rb(1280, 720)
 
     class PixelGenerator(Elaboratable):
         def __init__(self):
@@ -96,28 +96,47 @@ def dvi_demo(bld: Builder):
         def elaborate(self, platform: Platform) -> Module:
             m = Module()
 
-            phase = Signal(range(5))
-            read = Signal()
-            m.d.sync += phase.eq(Mux(read, 0, phase + 1))
-            m.d.comb += read.eq(phase == 4)
-
-            m.d.comb += self.o_read.eq(read)
+            r_packed = Signal(3*10)
 
             pairs = [
-                (self.i_packed[0:10], self.o_data[0]),
-                (self.i_packed[10:20], self.o_data[1]),
-                (self.i_packed[20:30], self.o_data[2]),
+                (r_packed[0:10], self.o_data[0]),
+                (r_packed[10:20], self.o_data[1]),
+                (r_packed[20:30], self.o_data[2]),
                 (C(0b0000011111, 10), self.o_clk),
             ]
 
+            # (0) 0123 4567 89?? ????
+            # (1) 4567 89ab cdef ghij (read; read_hi)
+            # (2) 89ab cdef ghij ????
+            # (3) cdef ghij ???? ????
+            # (4) ghij 0123 4567 89?? (read; read_lo)
+
+            read_cycle = Signal(5, reset=1)
+            read_hi = Signal()
+            read_lo = Signal()
+
+            m.d.sclk += [
+                read_cycle.eq(Cat(read_cycle[1:], read_cycle[:1])),
+                read_hi.eq(read_cycle[1]),
+                read_lo.eq(read_cycle[4]),
+            ]
+            with m.If(read_cycle[1] | read_cycle[4]):
+                m.d.comb += self.o_read.eq(1)
+                m.d.sclk += r_packed.eq(self.i_packed)
+
             for ix,(i,o) in enumerate(pairs):
-                ddr = Ecp5OutDdr2()
-                reg = Signal(10, name=f"reg{ix}")
+                ddr = DomainRenamer("eclk")(Ecp5OutDdr2())
+                reg = Signal(16, name=f"reg{ix}")
                 m.submodules[f"ddr{ix}"] = ddr
-                with m.If(read):
-                    m.d.sync += reg.eq(i)
+
+                m.d.sclk += reg.eq(reg[4:])
+                with m.If(read_lo):
+                    m.d.sclk += reg[6:16].eq(i)
+                with m.If(read_hi):
+                    m.d.sclk += reg[4:14].eq(i)
+
                 m.d.comb += [
-                    ddr.i.eq(i.word_select(phase, 2)),
+                    ddr.i.eq(Mux(ClockSignal("sclk"), reg[2:4], reg[0:2])),
                     o.eq(ddr.o),
                 ]
 
@@ -127,52 +146,49 @@ def dvi_demo(bld: Builder):
         def elaborate(self, platform: Platform) -> Module:
             m = Module()
 
-            # Setup two clock domains
-            m.submodules.pll = pll = Ecp5Pll(platform.default_clk_frequency, [
-                PllClock(dvi_mode.pixel_clock * 5, error_weight=100.0, tolerance=0.01), # TMDS 2 bits
-                PllClock(dvi_mode.pixel_clock, tolerance=(1e-20, 1.0)), # Pixel clock
+            m.submodules.plla = plla = Ecp5Pll(platform.default_clk_frequency, [
+                PllClock(100.0*MHz, error_weight=10.0), # 100MHz helper clock for accurate shift clock
+                PllClock(dvi_mode.pixel_clock, tolerance=(1e-20, 0.1)), # Pixel clock
             ])
 
-            m.domains.tmds_2bit = ClockDomain("tmds_2bit")
+            # Setup two clock domains
+            m.submodules.pllb = pllb = Ecp5Pll(plla.config.clko_hzs[0], [
+                PllClock(dvi_mode.pixel_clock * 5, tolerance=0.001), # TMDS 2 bits
+            ])
+
+            m.submodules.div = div = Ecp5ClockDiv2(pllb.config.clko_hzs[0])
+
+            m.domains.tmds_eclk = ClockDomain("tmds_eclk")
+            m.domains.tmds_sclk = ClockDomain("tmds_sclk")
             m.domains.pixel = ClockDomain("pixel")
             m.d.comb += [
-                pll.i_clk.eq(ClockSignal()),
-                ClockSignal("tmds_2bit").eq(pll.o_clk[0]),
-                ClockSignal("pixel").eq(pll.o_clk[1]),
+                plla.i_clk.eq(ClockSignal()),
+                pllb.i_clk.eq(plla.o_clk[0]),
+                div.i.eq(pllb.o_clk[0]),
+                ClockSignal("pixel").eq(plla.o_clk[1]),
+                ClockSignal("tmds_eclk").eq(pllb.o_clk[0]),
+                ClockSignal("tmds_sclk").eq(div.o),
             ]
 
-            use_fifo = True
+            m.submodules.fifo = fifo = \
+                AsyncFIFOBuffered(width=3*10, depth=4, r_domain="tmds_sclk", w_domain="pixel")
 
-            if use_fifo:
-                m.submodules.fifo = fifo = \
-                    AsyncFIFOBuffered(width=3*10, depth=4, r_domain="tmds_2bit", w_domain="pixel")
-
-                m.submodules.pixel_gen = pixel_gen = \
-                    DomainRenamer("pixel")(EnableInserter(fifo.w_rdy)(PixelGenerator()))
-            else:
-                m.submodules.pixel_gen = pixel_gen = \
-                    DomainRenamer("pixel")(PixelGenerator())
+            m.submodules.pixel_gen = pixel_gen = \
+                DomainRenamer("pixel")(EnableInserter(fifo.w_rdy)(PixelGenerator()))
 
             m.submodules.tmds_shifter = tmds_shifter = \
-                DomainRenamer("tmds_2bit")(TmdsShifter())
+                DomainRenamer({ "eclk": "tmds_eclk", "sclk": "tmds_sclk" })(TmdsShifter())
 
             hdmi = platform.request("hdmi")
 
-            if use_fifo:
-                m.d.comb += [
-                    tmds_shifter.i_packed.eq(fifo.r_data),
-                    hdmi.d.eq(tmds_shifter.o_data),
-                    hdmi.clk.eq(tmds_shifter.o_clk),
-                    fifo.r_en.eq(tmds_shifter.o_read),
-                    fifo.w_data.eq(pixel_gen.o_packed),
-                    fifo.w_en.eq(1),
-                ]
-            else:
-                m.d.pixel += tmds_shifter.i_packed.eq(pixel_gen.o_packed),
-                m.d.comb += [
-                    hdmi.d.eq(tmds_shifter.o_data),
-                    hdmi.clk.eq(tmds_shifter.o_clk),
-                ]
+            m.d.comb += [
+                tmds_shifter.i_packed.eq(fifo.r_data),
+                hdmi.d.eq(tmds_shifter.o_data),
+                hdmi.clk.eq(tmds_shifter.o_clk),
+                fifo.r_en.eq(tmds_shifter.o_read),
+                fifo.w_data.eq(pixel_gen.o_packed),
+                fifo.w_en.eq(1),
+            ]
 
             return m
 

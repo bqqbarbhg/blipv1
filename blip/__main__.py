@@ -23,6 +23,7 @@ if argv.cmd == "check":
         "rtl.ecp5.io",
         "util.dvi_timing",
         "test.dvi_demo",
+        "test.dvi_demo_720p",
     ]
 
     def use_check(check: Check) -> bool:
@@ -55,7 +56,7 @@ if argv.cmd == "check":
 
     begin_sec = time.time()
 
-    num_executed = False
+    num_executed = 0
     for check in all_checks:
         if not use_check(check): continue
         print(check.name + "...", flush=True)
