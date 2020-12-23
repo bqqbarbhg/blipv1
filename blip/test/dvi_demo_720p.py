@@ -151,9 +151,8 @@ def synth(bld: Builder):
                 PllClock(dvi_mode.pixel_clock, tolerance=(1e-20, 0.1)), # Pixel clock
             ])
 
-            # Setup two clock domains
             m.submodules.pllb = pllb = Ecp5Pll(plla.config.clko_hzs[0], [
-                PllClock(dvi_mode.pixel_clock * 5, tolerance=0.001), # TMDS 2 bits
+                PllClock(dvi_mode.pixel_clock * 5, tolerance=0.001), # TMDS 2 bits per clock
             ])
 
             m.submodules.div = div = Ecp5ClockDiv2(pllb.config.clko_hzs[0])
