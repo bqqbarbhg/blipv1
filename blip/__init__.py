@@ -1,2 +1,2 @@
 
-from .build import check, Builder
+from .build import check, Builder, use_asserts

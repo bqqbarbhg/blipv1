@@ -1,3 +1,4 @@
+from nmigen.build import Platform
 from nmigen.build.run import BuildPlan
 import os
 import sys
@@ -159,3 +160,6 @@ def check(shared=False):
         all_checks.append(check)
         return fn
     return inner
+
+def use_asserts(p: Platform):
+    return not p

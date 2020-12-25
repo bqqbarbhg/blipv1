@@ -17,8 +17,9 @@ argv = parser.parse_args(sys.argv[1:])
 if argv.cmd == "check":
 
     check_files = [
-        "rtl.dvi.tmds",
         "rtl.pll",
+        "rtl.sdram",
+        "rtl.dvi.tmds",
         "rtl.ecp5.pll",
         "rtl.ecp5.io",
         "util.dvi_timing",
